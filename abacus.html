@@ -164,6 +164,11 @@
             color: #333;
             border: 2px solid #d7ccc8;
             margin-top: 10px;
+            cursor: pointer; /* 鼠标变成小手，提示可点击 */
+            transition: background-color 0.2s;
+        }
+        .digit-display:active {
+            background-color: #eee; /* 点击时的反馈 */
         }
 
         .btn-mini {
@@ -186,8 +191,9 @@
 
         /* 隐藏拖拽光标 */
         .bead {
-            cursor: default;
+            cursor: pointer;
             position: relative;
+            touch-action: manipulation; /* 优化移动端点击响应 */
         }
 
         /* 结果展示卡片 */
@@ -255,6 +261,7 @@
             box-shadow: 0 4px 10px rgba(0,0,0,0.1);
             background-color: white;
             color: #555;
+            touch-action: manipulation;
         }
 
         .action-btn:hover {
@@ -341,9 +348,12 @@
             const oscillator = audioCtx.createOscillator();
             const gainNode = audioCtx.createGain();
 
+            // 优化：加入微小的随机音高变化 (700Hz - 900Hz)，模拟真实物理碰撞的不确定性
+            const randomFreq = 700 + Math.random() * 200;
+
             // 模拟清脆的撞击声 (三角波 + 快速频率衰减)
             oscillator.type = 'triangle'; 
-            oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(randomFreq, audioCtx.currentTime);
             oscillator.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
 
             gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
@@ -436,6 +446,7 @@
                     const heavenBead = document.createElement('div');
                     heavenBead.className = 'bead heaven-bead';
                     heavenBead.id = `heaven-bead-${place.power}-${i}`;
+                    heavenBead.onclick = () => handleAbacusBeadClick(place.power, 'heaven', i);
                     counterTop.appendChild(heavenBead);
                 }
 
@@ -451,30 +462,16 @@
                     const earthBead = document.createElement('div');
                     earthBead.className = 'bead earth-bead';
                     earthBead.id = `earth-bead-${place.power}-${i}`;
+                    earthBead.onclick = () => handleAbacusBeadClick(place.power, 'earth', i);
                     counterBottom.appendChild(earthBead);
                 }
 
-
-                // 添加控制按钮
-                const btnGroup = document.createElement('div');
-                btnGroup.className = 'btn-group';
-                
                 const digitDisplay = document.createElement('div');
                 digitDisplay.className = 'digit-display';
                 digitDisplay.id = `digit-${place.power}`; // 添加ID以便后续更新
                 digitDisplay.textContent = '0'; // 初始显示 0
-                const btnPlus = document.createElement('button');
-                btnPlus.className = 'btn-mini btn-plus';
-                btnPlus.textContent = '+';
-                btnPlus.onclick = () => changeValue(place.power, 1);
-
-                const btnMinus = document.createElement('button');
-                btnMinus.className = 'btn-mini btn-minus';
-                btnMinus.textContent = '-';
-                btnMinus.onclick = () => changeValue(place.power, -1);
-
-                btnGroup.appendChild(btnPlus);
-                btnGroup.appendChild(btnMinus);
+                digitDisplay.title = "点击清零此列"; // 鼠标悬停提示
+                digitDisplay.onclick = () => clearColumn(place.power); // 绑定清零事件
                 
                 // 标签移到底部
                 const labelDiv = document.createElement('div');
@@ -485,7 +482,6 @@
                 columnDiv.appendChild(beam);
                 columnDiv.appendChild(counterBottom);
                 columnDiv.appendChild(digitDisplay); // 数字方框
-                columnDiv.appendChild(btnGroup);
                 columnDiv.appendChild(labelDiv); // 汉字标签放在最下面
                 abacusDiv.appendChild(columnDiv);
             });
@@ -493,45 +489,55 @@
             updateView();
         }
 
-        // 核心逻辑：改变数值
-        function changeValue(power, delta) {
-            const oldDigit = Math.floor(currentNumber / Math.pow(10, power)) % 10;
-            const newDigit = (oldDigit + delta + 10) % 10; // 预测下一位数字
-            
-            const isCarry = delta > 0 && oldDigit === 9;
-            const isBorrow = delta < 0 && oldDigit === 0;
+        // 新增：处理算盘珠子点击
+        function handleAbacusBeadClick(power, type, index) {
+            const placeVal = Math.pow(10, power);
+            const currentDigit = Math.floor(currentNumber / placeVal) % 10;
+            let newDigit;
 
-            const amount = delta * Math.pow(10, power);
-            let tempNumber = currentNumber + amount;
-
-            if (tempNumber > MAX_VALUE) tempNumber = MAX_VALUE;
-            if (tempNumber < 0) tempNumber = 0;
-
-            // 如果没有进位或借位，或者在边界上无法操作，则执行普通更新
-            if (!isCarry && !isBorrow || tempNumber === currentNumber) {
-                if (tempNumber !== currentNumber) playClickSound();
-                currentNumber = tempNumber;
-                updateView();
-                return;
+            if (type === 'earth') {
+                // 下珠逻辑 (0-4)
+                const clickedValue = 5 - index; // 修正：index 4(最上)代表1, index 0(最下)代表5
+                const currentLowerValue = currentDigit % 5;
+                if (currentLowerValue === clickedValue) {
+                    // 点击已激活的最高位下珠，取消它
+                    newDigit = currentDigit - 1;
+                } else {
+                    // 点击未激活的珠子，直接设为该值
+                    const upperValue = currentDigit >= 5 ? 5 : 0;
+                    newDigit = upperValue + clickedValue;
+                }
+            } else if (type === 'heaven') {
+                // 上珠逻辑 (0 or 5)
+                // 我们只关心下面那颗上珠 (index 1)
+                if (index === 1) {
+                    const isUpperActive = currentDigit >= 5;
+                    const lowerValue = currentDigit % 5;
+                    newDigit = isUpperActive ? lowerValue : 5 + lowerValue;
+                } else {
+                    return; // 点击最上面那颗上珠无效
+                }
             }
-            
-            // 执行进/借位动画
-            animateCarry(power, tempNumber);
+
+            const diff = newDigit - currentDigit;
+            if (diff === 0) return;
+
+            playClickSound();
+            currentNumber += diff * placeVal;
+            if (currentNumber > MAX_VALUE) currentNumber = MAX_VALUE;
+            if (currentNumber < 0) currentNumber = 0;
+            updateView();
         }
 
-        // 新增：进/借位动画函数
-        function animateCarry(power, newNumber) {
-            // 1. 播放第一声，并视觉上重置当前列
+        // 新增：清空某一列
+        function clearColumn(power) {
+            const placeVal = Math.pow(10, power);
+            const currentDigit = Math.floor(currentNumber / placeVal) % 10;
+            if (currentDigit === 0) return; // 已经是0就不处理
+
             playClickSound();
-            resetColumnVisuals(power);
-            
-            // 2. 短暂延迟后，更新数字并让CSS处理下一列的动画
-            setTimeout(() => {
-                currentNumber = newNumber;
-                updateView();
-                // 播放第二声，代表进位完成
-                playClickSound();
-            }, 200); // 延迟时间应略小于CSS过渡时间
+            currentNumber -= currentDigit * placeVal;
+            updateView();
         }
 
         // 更新显示
@@ -569,20 +575,6 @@
                         earthBead.classList.remove('active');
                     }
                 }
-            }
-        }
-
-        // 辅助函数：仅在视觉上重置一列的珠子
-        function resetColumnVisuals(power) {
-            // 重置上珠
-            for (let i = 0; i < 2; i++) {
-                document.getElementById(`heaven-bead-${power}-${i}`).classList.remove('active');
-            }
-
-            // 重置下珠
-            for (let b = 0; b < 5; b++) {
-                const earthBead = document.getElementById(`earth-bead-${power}-${b}`);
-                earthBead.classList.remove('active');
             }
         }
 
